@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat UI</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        .chat-container {
+            width: 90%;
+            max-width: 600px;
+            margin: 0 auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            background: #f9f9f9;
+            border-radius: 5px;
+        }
+        .chat-window {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-bottom: 10px;
+            background: white;
+        }
+        .chat-input {
+            width: 84%;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .chat-button {
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        .chat-button:hover {
+            background: #0056b3;
+        }
+        .message {
+            margin-bottom: 10px;
+            position: relative;
+        }
+        .user-message {
+            text-align: right;
+            color: blue;
+        }
+        .ai-message {
+            text-align: left;
+            color: green;
+        }
+        .copy-button {
+            position: absolute;
+            right: 0;
+            top: 0;
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            padding: 5px;
+            font-size: 12px;
+        }
+        .copy-button:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-window" id="chat-window"></div>
+        <input type="text" id="chat-input" class="chat-input" placeholder="input message..." />
+        <button id="chat-button" class="chat-button">send</button>
+        <button id="chat-button2" class="chat-button">force insert</button>
+        <button id="chat-button3" class="chat-button">AI complete</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        let chatLog = [];
+        document.getElementById('chat-button').addEventListener('click', sendMessage);
+        document.getElementById('chat-button2').addEventListener('click', sendMessage2);
+        document.getElementById('chat-button3').addEventListener('click', sendMessage3);
+        document.getElementById('chat-input').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        async function sendMessage() {
+            const inputField = document.getElementById('chat-input');
+            const message = inputField.value;
+            if (message.trim() === '') return;
+            chatLog.push({ sender: 'user', message: message });
+            addMessageToChat('user', message);
+            inputField.value = '';
+
+            const canCreate = await window.ai.canCreateTextSession();
+            if (canCreate !== "no") {
+                const session = await window.ai.createTextSession();
+                await handleStream(session);
+            } else {
+                addMessageToChat('ai', 'AI unable to create text session.');
+            }
+        }
+
+        async function sendMessage2() {
+            const inputField = document.getElementById('chat-input');
+            const message = inputField.value;
+            if (message.trim() === '') return;
+            chatLog.push({ sender: 'user', message: message });
+            addMessageToChat('user', message);
+        }
+
+        async function sendMessage3() {
+            const inputField = document.getElementById('chat-input');
+            const message = inputField.value;
+            if (message.trim() === '') return;
+            chatLog.push({ sender: 'user', message: message });
+            addMessageToChat('user', message);
+            inputField.value = '';
+
+            const canCreate = await window.ai.canCreateTextSession();
+            if (canCreate !== "no") {
+                const session = await window.ai.createTextSession();
+                await handleStream(session, false);
+            } else {
+                addMessageToChat('ai', 'AI unable to create text session.');
+            }
+        }
+
+        function addMessageToChat(sender, message) {
+            const chatWindow = document.getElementById('chat-window');
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', sender === 'user' ? 'user-message' : 'ai-message');
+            messageDiv.innerHTML = marked.parse(message, { renderer: renderer });
+
+            chatWindow.appendChild(messageDiv);
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        function chatLogToPrompt(){
+            let prompt = '';
+            for (let i = 0; i < chatLog.length; i++) {
+                prompt += chatLog[i].message + '<ctrl23>';
+            }
+            console.log(prompt);
+            return prompt;
+        }
+
+        function chatLogToPrompt2() {
+            let prompt = '';
+            for (let i = 0; i < chatLog.length; i++) {
+                if(i == chatLog.length - 1) {
+                    prompt += chatLog[i].message;
+                } else {
+                    prompt += chatLog[i].message + '<ctrl23>';
+                }
+            }
+            console.log(prompt);
+            return prompt;
+        }
+
+        async function handleStream(session, turn_change = true) {
+            let stream = session.promptStreaming(chatLogToPrompt());
+            if (turn_change === false) {
+               stream = session.promptStreaming(chatLogToPrompt2());
+            }
+            let fullMessage = '';
+            let messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', 'ai-message');
+            const chatWindow = document.getElementById('chat-window');
+            chatWindow.appendChild(messageDiv);
+
+            for await (const chunk of stream) {
+                fullMessage = chunk;
+                messageDiv.innerHTML = marked.parse(chunk, { renderer: renderer });
+                chatWindow.scrollTop = chatWindow.scrollHeight;
+            }
+            chatLog.push({ sender: 'ai', message: fullMessage });
+        }
+
+        const renderer = new marked.Renderer();
+        renderer.code = (code, infostring, escaped) => {
+            const codeBlock = `<pre><code>${escaped ? code : escape(code)}</code></pre>`;
+            const copyButton = `<button class="copy-button" onclick="copyCode('${escape(code)}')">copy</button>`;
+            return `<div class="code-block-container">${copyButton}${codeBlock}</div>`;
+        };
+
+        function copyCode(code) {
+            navigator.clipboard.writeText(unescape(code)).then(() => {
+            });
+        }
+
+        function escape(html) {
+            return html
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;')
+                .replace(/\n/g, '<br>');
+        }
+
+        function unescape(html) {
+            return html
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#039;/g, "'")
+                .replace(/<br>/g, '\n');
+        }
+    </script>
+</body>
+</html>
