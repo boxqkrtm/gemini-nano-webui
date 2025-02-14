@@ -3,22 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chat UI</title>
+    <title>Chat UI with Preview</title>
     <style>
-        body {
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
             font-family: Arial, sans-serif;
         }
+        .main-container {
+            display: flex;
+            width: 100%;
+            height: 100vh;
+        }
         .chat-container {
-            width: 90%;
-            max-width: 600px;
-            margin: 0 auto;
-            border: 1px solid #ccc;
-            padding: 10px;
+            width: 100%; /* 초기에는 전체 너비 사용 */
+            transition: width 0.3s ease;
+            height: 100vh;
+            border-right: 1px solid #ccc;
+            padding: 20px;
             background: #f9f9f9;
-            border-radius: 5px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+        }
+        .preview-container {
+            width: 0; /* 초기에는 너비 0 */
+            overflow: hidden;
+            transition: width 0.3s ease;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .preview-container.active {
+            width: 50%; /* 활성화 시 50% 너비 */
+        }
+        .chat-container.with-preview {
+            width: 50%; /* 미리보기 활성화 시 50% 너비 */
+        }
+        .preview-iframe {
+            width: 100%;
+            flex: 1;
+            border: none;
+            background: white;
+        }
+        .preview-header {
+            padding: 10px;
+            background: #f0f0f0;
+            border-bottom: 1px solid #ccc;
         }
         .chat-window {
-            height: 400px;
+            flex: 1;
             overflow-y: auto;
             border: 1px solid #ccc;
             padding: 10px;
@@ -26,23 +61,26 @@
             background: white;
         }
         .chat-input {
-            width: 82%; /* Updated width */
-            padding: 10px;
+            width: 85%;
+            padding: 15px;
             margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
         }
         .chat-button {
-            padding: 10px 20px;
+            width: 13%;
+            padding: 15px;
             background: #007bff;
             color: white;
             border: none;
             cursor: pointer;
+            border-radius: 4px;
         }
         .chat-button:hover {
             background: #0056b3;
         }
         .message {
             margin-bottom: 10px;
-            position: relative;
         }
         .user-message {
             text-align: right;
@@ -51,6 +89,9 @@
         .ai-message {
             text-align: left;
             color: green;
+        }
+        .code-block-container {
+            position: relative;
         }
         .copy-button {
             position: absolute;
@@ -66,40 +107,74 @@
         .copy-button:hover {
             background: #0056b3;
         }
-        /* Style for loading indicator */
-        .loading-indicator {
-            display: none; /* Hidden by default */
-            /* margin-left: 10px; */ /* Remove the margin */
-            font-style: italic;
-            color: #888;
-        }
     </style>
 </head>
 <body>
-    <div class="chat-container">
-        <a href="https://github.com/boxqkrtm/gemini-nano-webui">https://github.com/boxqkrtm/gemini-nano-webui</a>
-        <div class="chat-window" id="chat-window"></div>
-        <input type="text" id="chat-input" class="chat-input" placeholder="input message..." />
-        <button id="chat-button" class="chat-button">send</button>
-        <!-- Removed "force insert" and "AI complete" buttons as they are not necessary with the updated API. -->
-        <!-- <span id="loading-indicator" class="loading-indicator">Generating...</span> --> <!-- Remove the span element -->
+    <div class="main-container">
+        <div class="chat-container">
+            <a href="https://github.com/boxqkrtm/gemini-nano-webui">https://github.com/boxqkrtm/gemini-nano-webui</a>
+            <div class="chat-window" id="chat-window"></div>
+            <input type="text" id="chat-input" class="chat-input" placeholder="input message..." />
+            <button id="chat-button" class="chat-button">send</button>
+        </div>
+        <div class="preview-container">
+            <div class="preview-header">HTML Preview</div>
+            <iframe id="preview-frame" class="preview-iframe"></iframe>
+        </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         let chatLog = [];
-        let currentSession = null; // Store the current session.
-        let isGenerating = false;  // Track if the AI is currently generating
-        let abortController = null; // For aborting the stream
+        let currentSession = null;
+        let isGenerating = false;
+        let abortController = null;
 
         const chatButton = document.getElementById('chat-button');
-        //const loadingIndicator = document.getElementById('loading-indicator'); // Remove declaration
 
         chatButton.addEventListener('click', sendMessage);
 
         document.getElementById('chat-input').addEventListener('keydown', (event) => {
-            if (event.key === 'Enter' && !isGenerating) { // Prevent sending while generating
+            if (event.key === 'Enter' && !isGenerating) {
                 sendMessage();
             }
+        });
+
+        // marked 설정을 script 시작 부분으로 이동하고 초기화
+        const renderer = new marked.Renderer();
+        renderer.code = (code, language) => {
+            // code가 객체인 경우 text 속성 사용
+            const codeText = typeof code === 'object' ? code.text : code;
+            // HTML 이스케이프 처리
+            const escapedCode = codeText
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+
+            // HTML 코드 감지 및 미리보기 처리
+            if (code.raw.startsWith('```html') && code.raw.endsWith('```')) {
+                const previewContainer = document.querySelector('.preview-container');
+                const chatContainer = document.querySelector('.chat-container');
+                
+                previewContainer.classList.add('active');
+                chatContainer.classList.add('with-preview');
+                
+                // 미리보기 업데이트
+                updatePreview(codeText);
+            }
+            
+            const codeBlock = `<pre><code class="language-${language}">${escapedCode}</code></pre>`;
+            // 복사 버튼에 data-code 속성으로 코드 전달
+            const copyButton = `<button class="copy-button" data-code="${escapedCode}" onclick="copyCode(this)">copy</button>`;
+            return `<div class="code-block-container">${copyButton}${codeBlock}</div>`;
+        };
+        
+        // marked 옵션 설정
+        marked.setOptions({
+            renderer: renderer,
+            breaks: true,
+            gfm: true
         });
 
         async function sendMessage() {
@@ -107,36 +182,26 @@
             const message = inputField.value;
             if (message.trim() === '') return;
 
-            // Add user message to chat and log.
             addMessageToChat('user', message);
             chatLog.push({ sender: 'user', message: message });
             inputField.value = '';
 
-            // Check if the model is available.
             const { available } = await ai.languageModel.capabilities();
             if (available === "readily") {
-                // Update UI for generating state
                 isGenerating = true;
                 updateButtonState();
 
-                // Create a session if one doesn't exist. Reuse the existing session if it does.
                 if (!currentSession) {
-                    currentSession = await ai.languageModel.create({
-                        // You could add a systemPrompt here if desired:
-                        // systemPrompt: "You are a helpful chatbot."
-                    });
+                    currentSession = await ai.languageModel.create();
                 }
 
-                // Create AbortController for aborting the stream
                 abortController = new AbortController();
                 const signal = abortController.signal;
 
-                // Use promptStreaming for streaming output.
-                await handleStream(currentSession, message, signal); // Pass the signal
+                await handleStream(currentSession, message, signal);
 
             } else {
                 addMessageToChat('ai', 'AI model is not available. Check requirements and setup.');
-                // Update UI back to normal
                 isGenerating = false;
                 updateButtonState();
             }
@@ -146,7 +211,7 @@
             const chatWindow = document.getElementById('chat-window');
             const messageDiv = document.createElement('div');
             messageDiv.classList.add('message', sender === 'user' ? 'user-message' : 'ai-message');
-            messageDiv.innerHTML = marked.parse(message, { renderer: renderer });
+            messageDiv.innerHTML = marked.parse(message);
             chatWindow.appendChild(messageDiv);
             chatWindow.scrollTop = chatWindow.scrollHeight;
         }
@@ -157,25 +222,23 @@
             messageDiv.classList.add('message', 'ai-message');
             chatWindow.appendChild(messageDiv);
 
-            // Use promptStreaming, and build the prompt within the function.
-            const stream = session.promptStreaming(userMessage, { signal });  // Pass AbortSignal
+            const stream = session.promptStreaming(userMessage, { signal });
             let fullMessage = '';
-            let previousChunk = ''; // For handling the non-standard streaming.
+            let previousChunk = '';
 
-            try { // Add a try-catch block for error handling
+            try {
                 for await (const chunk of stream) {
-                    // Check if the stream has been aborted
                     if (signal.aborted) {
                         console.log("Stream aborted by user.");
-                        break;  // Exit the loop
+                        break;
                     }
 
-                    // Correctly handle the streaming output.
                     const newChunk = chunk.startsWith(previousChunk)
                         ? chunk.slice(previousChunk.length)
                         : chunk;
                     fullMessage += newChunk;
-                    messageDiv.innerHTML = marked.parse(fullMessage, { renderer: renderer });
+                    console.log(fullMessage);
+                    messageDiv.innerHTML = marked.parse(fullMessage);
                     chatWindow.scrollTop = chatWindow.scrollHeight;
                     previousChunk = chunk;
                 }
@@ -185,80 +248,67 @@
                 if (error.name === 'AbortError') {
                     console.log("Stream was aborted.");
                     addMessageToChat('ai', 'Generation was cancelled.');
+                } else {
+                    console.error("Error during streaming:", error);
+                    addMessageToChat('ai', 'An error occurred while generating the response.');
                 }
-                else {
-                  console.error("Error during streaming:", error);
-                  addMessageToChat('ai', 'An error occurred while generating the response.');
-                }
-                // Consider destroying the session if a significant error occurs.
                 if (currentSession) {
                     currentSession.destroy();
                     currentSession = null;
                 }
-            } finally { // Ensure loading indicator is hidden
+            } finally {
                 isGenerating = false;
                 updateButtonState();
-                abortController = null; // Reset AbortController
+                abortController = null;
             }
         }
 
         function updateButtonState() {
             if (isGenerating) {
                 chatButton.textContent = 'Stop';
-                chatButton.removeEventListener('click', sendMessage); // Remove existing listener
-                chatButton.addEventListener('click', stopGenerating);   // Add stop listener
-                //loadingIndicator.style.display = 'inline';          // Show loading indicator - REMOVED
-                document.getElementById('chat-input').disabled = true; //Disable the input
+                chatButton.removeEventListener('click', sendMessage);
+                chatButton.addEventListener('click', stopGenerating);
+                document.getElementById('chat-input').disabled = true;
             } else {
                 chatButton.textContent = 'Send';
-                chatButton.removeEventListener('click', stopGenerating); // Remove stop listener
-                chatButton.addEventListener('click', sendMessage);   // Add send listener
-                //loadingIndicator.style.display = 'none';         // Hide loading indicator - REMOVED
-                document.getElementById('chat-input').disabled = false; //Enable input
+                chatButton.removeEventListener('click', stopGenerating);
+                chatButton.addEventListener('click', sendMessage);
+                document.getElementById('chat-input').disabled = false;
             }
         }
 
         function stopGenerating() {
             if (abortController) {
-                abortController.abort(); // Abort the stream
+                abortController.abort();
             }
-            isGenerating = false; // Update state immediately
-            updateButtonState();    // Update button text
+            isGenerating = false;
+            updateButtonState();
         }
 
-        const renderer = new marked.Renderer();
-        renderer.code = (code, infostring, escaped) => {
-            const codeBlock = `<pre><code>${code.text}</code></pre>`;
-            const copyButton = `<button class="copy-button" onclick="copyCode('${code.text}')">copy</button>`;
-            return `<div class="code-block-container">${copyButton}${codeBlock}</div>`;
-        };
-
-        function copyCode(code) {
-            navigator.clipboard.writeText(unescape(code)).then(() => {
-                // Optionally add a visual cue (e.g., change button text to "Copied!")
+        function copyCode(button) {
+            const code = button.getAttribute('data-code');
+            // HTML 엔티티를 원래 문자로 디코딩
+            const decodedCode = code
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'");
+                
+            navigator.clipboard.writeText(decodedCode).then(() => {
+                button.textContent = "Copied!";
+                setTimeout(() => button.textContent = "copy", 2000);
+            }).catch(err => {
+                alert("코드 복사에 실패했습니다.");
             });
         }
 
-        // These escape/unescape functions are fine.
-        function escape(html) {
-            console.log(html);
-            return html
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#039;')
-                .replace(/\n/g, '<br>');
-        }
-
-        function unescape(html) {
-            return html
-                .replace(/&amp;/g, '&')
-                .replace(/</g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/&quot;/g, '"')
-                .replace(/&#039;/g, "'")
-                .replace(/<br>/g, '\n');
+        function updatePreview(htmlCode) {
+            const iframe = document.getElementById('preview-frame');
+            const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+            iframeDoc.open();
+            iframeDoc.write(htmlCode);
+            iframeDoc.close();
         }
     </script>
 </body>
