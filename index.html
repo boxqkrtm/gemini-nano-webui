@@ -66,6 +66,13 @@
         .copy-button:hover {
             background: #0056b3;
         }
+        /* Style for loading indicator */
+        .loading-indicator {
+            display: none; /* Hidden by default */
+            margin-left: 10px;
+            font-style: italic;
+            color: #888;
+        }
     </style>
 </head>
 <body>
@@ -74,15 +81,15 @@
         <div class="chat-window" id="chat-window"></div>
         <input type="text" id="chat-input" class="chat-input" placeholder="input message..." />
         <button id="chat-button" class="chat-button">send</button>
-        <button id="chat-button2" class="chat-button">force insert</button>
-        <button id="chat-button3" class="chat-button">AI complete</button>
+        <!-- Removed "force insert" and "AI complete" buttons as they are not necessary with the updated API. -->
+        <span id="loading-indicator" class="loading-indicator">Generating...</span> <!-- Loading indicator -->
     </div>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         let chatLog = [];
+        let currentSession = null; // Store the current session.
+
         document.getElementById('chat-button').addEventListener('click', sendMessage);
-        document.getElementById('chat-button2').addEventListener('click', sendMessage2);
-        document.getElementById('chat-button3').addEventListener('click', sendMessage3);
         document.getElementById('chat-input').addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
                 sendMessage();
@@ -93,41 +100,33 @@
             const inputField = document.getElementById('chat-input');
             const message = inputField.value;
             if (message.trim() === '') return;
-            chatLog.push({ sender: 'user', message: message });
+
+            // Add user message to chat and log.
             addMessageToChat('user', message);
+            chatLog.push({ sender: 'user', message: message });
             inputField.value = '';
 
-            const canCreate = await window.ai.canCreateTextSession();
-            if (canCreate !== "no") {
-                const session = await window.ai.createTextSession();
-                await handleStream(session);
+             // Show loading indicator
+            const loadingIndicator = document.getElementById('loading-indicator');
+            loadingIndicator.style.display = 'inline';
+
+            // Check if the model is available.
+            const { available } = await ai.languageModel.capabilities();
+            if (available === "readily") {
+                // Create a session if one doesn't exist.  Reuse the existing session if it does.
+                if (!currentSession) {
+                    currentSession = await ai.languageModel.create({
+                        // You could add a systemPrompt here if desired:
+                        // systemPrompt: "You are a helpful chatbot."
+                    });
+                }
+
+                // Use promptStreaming for streaming output.
+                await handleStream(currentSession, message);  // Pass the message.
             } else {
-                addMessageToChat('ai', 'AI unable to create text session.');
-            }
-        }
-
-        async function sendMessage2() {
-            const inputField = document.getElementById('chat-input');
-            const message = inputField.value;
-            if (message.trim() === '') return;
-            chatLog.push({ sender: 'user', message: message });
-            addMessageToChat('user', message);
-        }
-
-        async function sendMessage3() {
-            const inputField = document.getElementById('chat-input');
-            const message = inputField.value;
-            if (message.trim() === '') return;
-            chatLog.push({ sender: 'user', message: message });
-            addMessageToChat('user', message);
-            inputField.value = '';
-
-            const canCreate = await window.ai.canCreateTextSession();
-            if (canCreate !== "no") {
-                const session = await window.ai.createTextSession();
-                await handleStream(session, false);
-            } else {
-                addMessageToChat('ai', 'AI unable to create text session.');
+                addMessageToChat('ai', 'AI model is not available.  Check requirements and setup.');
+                 // Hide loading indicator
+                loadingIndicator.style.display = 'none';
             }
         }
 
@@ -136,50 +135,48 @@
             const messageDiv = document.createElement('div');
             messageDiv.classList.add('message', sender === 'user' ? 'user-message' : 'ai-message');
             messageDiv.innerHTML = marked.parse(message, { renderer: renderer });
-
             chatWindow.appendChild(messageDiv);
             chatWindow.scrollTop = chatWindow.scrollHeight;
         }
 
-        function chatLogToPrompt(){
-            let prompt = '';
-            for (let i = 0; i < chatLog.length; i++) {
-                prompt += chatLog[i].message + '<ctrl23>';
-            }
-            console.log(prompt);
-            return prompt;
-        }
-
-        function chatLogToPrompt2() {
-            let prompt = '';
-            for (let i = 0; i < chatLog.length; i++) {
-                if(i == chatLog.length - 1) {
-                    prompt += chatLog[i].message;
-                } else {
-                    prompt += chatLog[i].message + '<ctrl23>';
-                }
-            }
-            console.log(prompt);
-            return prompt;
-        }
-
-        async function handleStream(session, turn_change = true) {
-            let stream = session.promptStreaming(chatLogToPrompt());
-            if (turn_change === false) {
-               stream = session.promptStreaming(chatLogToPrompt2());
-            }
-            let fullMessage = '';
-            let messageDiv = document.createElement('div');
-            messageDiv.classList.add('message', 'ai-message');
+        async function handleStream(session, userMessage) {
             const chatWindow = document.getElementById('chat-window');
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message', 'ai-message');
             chatWindow.appendChild(messageDiv);
 
-            for await (const chunk of stream) {
-                fullMessage = chunk;
-                messageDiv.innerHTML = marked.parse(chunk, { renderer: renderer });
-                chatWindow.scrollTop = chatWindow.scrollHeight;
+            // Use promptStreaming, and build the prompt within the function.
+            const stream = session.promptStreaming(userMessage);  //Just send the user's message
+            let fullMessage = '';
+            let previousChunk = ''; // For handling the non-standard streaming.
+
+            try { // Add a try-catch block for error handling
+                for await (const chunk of stream) {
+                    // Correctly handle the streaming output.
+                    const newChunk = chunk.startsWith(previousChunk)
+                        ? chunk.slice(previousChunk.length)
+                        : chunk;
+
+                    fullMessage += newChunk;
+                    messageDiv.innerHTML = marked.parse(fullMessage, { renderer: renderer });
+                    chatWindow.scrollTop = chatWindow.scrollHeight;
+                    previousChunk = chunk;
+                }
+               chatLog.push({ sender: 'ai', message: fullMessage });
+
+            } catch (error) {
+                console.error("Error during streaming:", error);
+                addMessageToChat('ai', 'An error occurred while generating the response.');
+                 // Consider destroying the session if a significant error occurs.
+                if (currentSession) {
+                    currentSession.destroy();
+                    currentSession = null;
+                }
+
+            } finally { // Ensure loading indicator is hidden
+                const loadingIndicator = document.getElementById('loading-indicator');
+                loadingIndicator.style.display = 'none';
             }
-            chatLog.push({ sender: 'ai', message: fullMessage });
         }
 
         const renderer = new marked.Renderer();
@@ -191,9 +188,11 @@
 
         function copyCode(code) {
             navigator.clipboard.writeText(unescape(code)).then(() => {
+                // Optionally add a visual cue (e.g., change button text to "Copied!")
             });
         }
 
+        // These escape/unescape functions are fine.
         function escape(html) {
             return html
                 .replace(/&/g, '&amp;')
