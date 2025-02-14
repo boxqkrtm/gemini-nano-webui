@@ -181,8 +181,8 @@
 
         const renderer = new marked.Renderer();
         renderer.code = (code, infostring, escaped) => {
-            const codeBlock = `<pre><code>${escaped ? code : escape(code)}</code></pre>`;
-            const copyButton = `<button class="copy-button" onclick="copyCode('${escape(code)}')">copy</button>`;
+            const codeBlock = `<pre><code>${code.text}</code></pre>`;
+            const copyButton = `<button class="copy-button" onclick="copyCode('${code.text}')">copy</button>`;
             return `<div class="code-block-container">${copyButton}${codeBlock}</div>`;
         };
 
@@ -194,6 +194,7 @@
 
         // These escape/unescape functions are fine.
         function escape(html) {
+            console.log(html);
             return html
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
